@@ -163,16 +163,23 @@ class RotatingCircles(Scene):
     def construct(self):
         self.camera.background_color = C_BG
 
-        title = Text("왜 원인가?", font="Arial", color=C_BASE)\
-            .scale(0.8).to_edge(UP, buff=0.3)
+        # ── 레이아웃 ──────────────────────────────────────────────────────
+        title = Text("sin = 원의 회전", font="Arial", color=C_BASE)\
+            .scale(0.75).to_edge(UP, buff=0.25)
         self.play(FadeIn(title))
 
-        center = LEFT * 3.5
-        radius = 1.4
+        # 왼쪽: 회전 원  /  오른쪽: 파형
+        center = LEFT * 3.8 + DOWN * 0.3
+        radius = 1.3
 
         circle = Circle(radius=radius, color=C_BLUE, stroke_width=1.5)\
             .move_to(center)
-        self.play(Create(circle), run_time=0.8)
+        self.play(Create(circle), run_time=0.7)
+
+        # 진폭 라벨 — 원 왼쪽
+        amp_label = Text("진폭 r", font="Arial", color=C_BLUE).scale(0.38)\
+            .next_to(circle, LEFT, buff=0.15)
+        self.play(FadeIn(amp_label))
 
         angle_tracker = ValueTracker(0)
 
@@ -181,98 +188,124 @@ class RotatingCircles(Scene):
             return center + np.array([radius * np.cos(a), radius * np.sin(a), 0])
 
         radius_line = always_redraw(
-            lambda: Line(center, get_tip(), color=C_BLUE, stroke_width=2)
+            lambda: Line(center, get_tip(), color=C_BLUE, stroke_width=2.2)
         )
         tip_dot = always_redraw(
-            lambda: Dot(get_tip(), color=C_ORANGE, radius=0.08)
+            lambda: Dot(get_tip(), color=C_ORANGE, radius=0.1)
         )
-
         self.play(Create(radius_line), FadeIn(tip_dot))
 
+        # 오른쪽 축 — 원과 겹치지 않게
         axes_wave = Axes(
             x_range=[0, 2 * PI, PI / 2],
             y_range=[-1.8, 1.8, 1],
-            x_length=7,
-            y_length=3.2,
+            x_length=6.0,
+            y_length=2.8,
             axis_config={"color": C_MUTED, "stroke_width": 1},
             tips=False,
-        ).shift(RIGHT * 3.5)
+        ).shift(RIGHT * 2.2 + DOWN * 0.3)
 
-        x_label = MathTex(r"\theta", color=C_MUTED).scale(0.5)\
+        x_label = MathTex(r"\theta", color=C_MUTED).scale(0.45)\
             .next_to(axes_wave, RIGHT, buff=0.1)
-        y_label = MathTex(r"\sin(\theta)", color=C_ORANGE).scale(0.5)\
-            .next_to(axes_wave, UP, buff=0.1)
+        y_label = MathTex(r"\sin\theta", color=C_ORANGE).scale(0.45)\
+            .next_to(axes_wave, UP, buff=0.08)
 
         self.play(Create(axes_wave), FadeIn(x_label), FadeIn(y_label))
 
-        # 연결선
+        # 수평 연결선 (원 끝 → 파형 현재 위치)
         connect_line = always_redraw(
             lambda: DashedLine(
                 get_tip(),
                 axes_wave.c2p(angle_tracker.get_value() % (2 * PI),
-                              np.sin(angle_tracker.get_value())),
-                color=C_MUTED, stroke_width=0.7, dash_length=0.08
+                              radius * np.sin(angle_tracker.get_value())),
+                color=C_MUTED, stroke_width=0.8, dash_length=0.07
             )
         )
         self.add(connect_line)
 
-        # 파형: VMobject에 점을 직접 추가하는 방식 (재귀 없음)
+        # 파형: updater로 점 직접 수정 (become 미사용 → 재귀 없음)
         wave_mob = VMobject(color=C_ORANGE, stroke_width=2.5)
-        wave_mob.set_points_as_corners([axes_wave.c2p(0, 0), axes_wave.c2p(0, 0)])
+        wave_mob.set_points_as_corners([
+            axes_wave.c2p(0, 0), axes_wave.c2p(0.001, 0)
+        ])
+
+        def update_wave(mob):
+            a = angle_tracker.get_value()
+            if a < 0.05:
+                return
+            n = max(2, int(a / (2 * PI) * 150))
+            pts = [
+                axes_wave.c2p(a * i / n, radius * np.sin(a * i / n))
+                for i in range(n + 1)
+            ]
+            mob.set_points_as_corners(pts)
+
+        wave_mob.add_updater(update_wave)
         self.add(wave_mob)
         self.add(radius_line, tip_dot)
 
-        N_STEPS = 120
-        for i in range(1, N_STEPS + 1):
-            a = (i / N_STEPS) * 2 * PI
-            new_pt = axes_wave.c2p(a, radius * np.sin(a))
-            pts = wave_mob.get_points()
-            wave_mob.set_points_as_corners(
-                [axes_wave.c2p(j / N_STEPS * 2 * PI,
-                               radius * np.sin(j / N_STEPS * 2 * PI))
-                 for j in range(i + 1)]
-            )
-            angle_tracker.set_value(a)
-            self.wait(4 / N_STEPS)
+        # ── 회전 애니메이션 ───────────────────────────────────────────────
+        self.play(
+            angle_tracker.animate.set_value(2 * PI),
+            run_time=5, rate_func=linear
+        )
+        wave_mob.remove_updater(update_wave)
+        self.wait(0.4)
 
-        radius_label = Text("진폭", font="Arial", color=C_BLUE).scale(0.45)\
-            .next_to(circle, DOWN, buff=0.15)
-        freq_label = Text("주파수 = 회전 속도",
-                          font="Arial", color=C_GREEN).scale(0.45)\
-            .to_edge(DOWN, buff=0.5)
-
-        self.play(FadeIn(radius_label), FadeIn(freq_label))
+        # 주파수 설명 — 원 아래
+        freq_label = Text("주파수 = 1초에 몇 바퀴",
+                          font="Arial", color=C_GREEN).scale(0.38)\
+            .next_to(circle, DOWN, buff=0.35)
+        self.play(FadeIn(freq_label))
         self.wait(0.5)
 
         # ── 2배 주파수 비교 ───────────────────────────────────────────────
-        compare_text = Text("2배 빠르게 회전하면?",
-                            font="Arial", color=C_MUTED).scale(0.4)\
-            .next_to(circle, UP, buff=0.2)
+        compare_text = Text("2배 빠르면?", font="Arial", color=C_MUTED).scale(0.38)\
+            .to_corner(UL, buff=0.6).shift(DOWN * 0.6)
         self.play(FadeIn(compare_text))
 
-        wave2 = axes_wave.plot(
-            lambda x: 0.7 * np.sin(2 * x),
-            color=C_GREEN, stroke_width=2, stroke_opacity=0.7
-        )
-        self.play(Create(wave2), run_time=1.5)
+        # angle_tracker 리셋 후 2배 속도로 회전
+        angle_tracker.set_value(0)
+        wave2 = VMobject(color=C_GREEN, stroke_width=2.5)
+        wave2.set_points_as_corners([
+            axes_wave.c2p(0, 0), axes_wave.c2p(0.001, 0)
+        ])
 
-        annot = Text("2배 주파수 = 2배 빠른 진동",
-                     font="Arial", color=C_GREEN).scale(0.38)\
-            .next_to(wave2, UP, buff=0.1).shift(RIGHT * 1)
+        def update_wave2(mob):
+            a = angle_tracker.get_value()
+            if a < 0.05:
+                return
+            n = max(2, int(a / (2 * PI) * 150))
+            pts = [
+                axes_wave.c2p(a * i / n, 0.8 * np.sin(2 * a * i / n))
+                for i in range(n + 1)
+            ]
+            mob.set_points_as_corners(pts)
+
+        wave2.add_updater(update_wave2)
+        self.add(wave2)
+
+        self.play(
+            angle_tracker.animate.set_value(2 * PI),
+            run_time=2.5, rate_func=linear
+        )
+        wave2.remove_updater(update_wave2)
+
+        annot = Text("f=2: 2배 빠른 진동",
+                     font="Arial", color=C_GREEN).scale(0.36)\
+            .next_to(axes_wave, DOWN, buff=0.15)
         self.play(FadeIn(annot))
-        self.wait(2)
+        self.wait(1.5)
 
         # ── 오일러 공식 ───────────────────────────────────────────────────
         euler = MathTex(
             r"e^{i\theta} = \cos\theta + i\sin\theta",
             color=C_BASE
-        ).scale(0.7).to_edge(DOWN, buff=0.3)
-
+        ).scale(0.65).to_edge(DOWN, buff=0.25)
         euler_explain = Text("원 위의 회전 = 복소수",
-                             font="Arial", color=C_MUTED).scale(0.38)\
-            .next_to(euler, UP, buff=0.1)
-
-        self.play(FadeIn(euler), FadeIn(euler_explain))
+                             font="Arial", color=C_MUTED).scale(0.36)\
+            .next_to(euler, UP, buff=0.12)
+        self.play(FadeIn(euler_explain), FadeIn(euler))
         self.wait(2)
 
 
